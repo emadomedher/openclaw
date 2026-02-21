@@ -1,0 +1,15 @@
+{
+  "name": "@openclaw/zulip",
+  "version": "0.1.0",
+  "description": "Zulip channel plugin for OpenClaw",
+  "main": "./dist/index.js",
+  "channel": {
+    "id": "zulip",
+    "label": "Zulip",
+    "selectionLabel": "Zulip (plugin)",
+    "docsPath": "/channels/zulip",
+    "docsLabel": "zulip",
+    "blurb": "Open-source threaded team chat with powerful search and integrations.",
+    "order": 66
+  }
+}
