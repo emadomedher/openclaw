@@ -906,7 +906,7 @@ export async function textToSpeech(params: {
 
       if (provider === "chatterbox") {
         if (!config.chatterbox.enabled) {
-          lastError = "chatterbox: disabled";
+          errors.push("chatterbox: disabled");
           continue;
         }
 
@@ -921,7 +921,9 @@ export async function textToSpeech(params: {
         const latencyMs = Date.now() - providerStart;
         const extension = responseFormat === "opus" ? ".opus" : ".mp3";
 
-        const tempDir = mkdtempSync(path.join(tmpdir(), "tts-"));
+        const tempRoot = resolvePreferredOpenClawTmpDir();
+        mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+        const tempDir = mkdtempSync(path.join(tempRoot, "tts-"));
         const audioPath = path.join(tempDir, `voice-${Date.now()}${extension}`);
         writeFileSync(audioPath, audioBuffer);
         scheduleCleanup(tempDir);
@@ -940,7 +942,7 @@ export async function textToSpeech(params: {
 
       if (provider === "piper") {
         if (!config.piper.enabled) {
-          lastError = "piper: disabled";
+          errors.push("piper: disabled");
           continue;
         }
 
@@ -955,7 +957,9 @@ export async function textToSpeech(params: {
         const latencyMs = Date.now() - providerStart;
         const extension = responseFormat === "opus" ? ".opus" : ".mp3";
 
-        const tempDir = mkdtempSync(path.join(tmpdir(), "tts-"));
+        const tempRoot = resolvePreferredOpenClawTmpDir();
+        mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+        const tempDir = mkdtempSync(path.join(tempRoot, "tts-"));
         const audioPath = path.join(tempDir, `voice-${Date.now()}${extension}`);
         writeFileSync(audioPath, audioBuffer);
         scheduleCleanup(tempDir);
@@ -974,7 +978,7 @@ export async function textToSpeech(params: {
 
       if (provider === "kokoro") {
         if (!config.kokoro.enabled) {
-          lastError = "kokoro: disabled";
+          errors.push("kokoro: disabled");
           continue;
         }
 
@@ -989,7 +993,9 @@ export async function textToSpeech(params: {
         const latencyMs = Date.now() - providerStart;
         const extension = responseFormat === "opus" ? ".opus" : ".mp3";
 
-        const tempDir = mkdtempSync(path.join(tmpdir(), "tts-"));
+        const tempRoot = resolvePreferredOpenClawTmpDir();
+        mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+        const tempDir = mkdtempSync(path.join(tempRoot, "tts-"));
         const audioPath = path.join(tempDir, `voice-${Date.now()}${extension}`);
         writeFileSync(audioPath, audioBuffer);
         scheduleCleanup(tempDir);
@@ -1108,7 +1114,7 @@ export async function textToSpeechTelephony(params: {
       if (provider === "chatterbox") {
         // Chatterbox telephony support could be added in the future
         // when PCM output format is supported by the API
-        lastError = "chatterbox: unsupported for telephony";
+        errors.push("chatterbox: unsupported for telephony");
         continue;
       }
 
