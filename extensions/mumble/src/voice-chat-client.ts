@@ -10,9 +10,15 @@
  * 6. Encode to Opus and send back to Mumble
  */
 
-import { AudioCodec, type FullAudioPacket, Client } from "@tf2pickup-org/mumble-client";
-import fetch from "node-fetch";
 import { EventEmitter } from "node:events";
+import { Client } from "@tf2pickup-org/mumble-client";
+import fetch from "node-fetch";
+import {
+  AudioCodec,
+  type FullAudioPacket,
+  type MumbleSocket,
+  type MumbleAudioStream,
+} from "./mumble-audio.js";
 import {
   MumbleOpusDecoder,
   MumbleOpusEncoder,
@@ -22,9 +28,6 @@ import {
   sleep,
   MUMBLE_AUDIO_CONFIG,
 } from "./opus-audio-pipeline.js";
-
-// Extract MumbleSocket type from Client
-type MumbleSocket = NonNullable<Client["socket"]>;
 
 export interface VoiceChatConfig {
   // Mumble connection
@@ -60,6 +63,7 @@ export class VoiceChatClient extends EventEmitter {
   private decoder: MumbleOpusDecoder;
   private encoder: MumbleOpusEncoder;
   private socket?: MumbleSocket;
+  private audioStream?: MumbleAudioStream;
   private userManager?: any; // UserManager from mumble-client
 
   // Per-user audio accumulators
@@ -98,6 +102,13 @@ export class VoiceChatClient extends EventEmitter {
    */
   setSocket(socket: MumbleSocket): void {
     this.socket = socket;
+  }
+
+  /**
+   * Set the audio stream wrapper for sending audio
+   */
+  setAudioStream(audioStream: MumbleAudioStream): void {
+    this.audioStream = audioStream;
   }
 
   /**
@@ -403,8 +414,8 @@ export class VoiceChatClient extends EventEmitter {
    * Send audio frames to Mumble
    */
   private async sendAudioFrames(frames: Array<Int16Array | Float32Array>): Promise<void> {
-    if (!this.socket) {
-      console.warn("[voice-chat] No socket available, cannot send audio");
+    if (!this.audioStream) {
+      console.warn("[voice-chat] No audio stream available, cannot send audio");
       return;
     }
 
@@ -422,9 +433,9 @@ export class VoiceChatClient extends EventEmitter {
           continue;
         }
 
-        // Send via socket
-        await this.socket.sendAudio(
-          opusFrame,
+        // Send via audio stream wrapper
+        await this.audioStream.sendAudio(
+          Buffer.from(opusFrame),
           AudioCodec.Opus,
           0, // target: normal talking
           i === frames.length - 1, // isTerminator: last frame

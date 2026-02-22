@@ -5,9 +5,10 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { Client, type FullAudioPacket } from "@tf2pickup-org/mumble-client";
+import { Client } from "@tf2pickup-org/mumble-client";
 import fetch from "node-fetch";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { MumbleAudioStream, type FullAudioPacket } from "./mumble-audio.js";
 import { VoiceChatClient, type VoiceMessage } from "./voice-chat-client.js";
 
 interface MumblePluginConfig {
@@ -74,6 +75,7 @@ export default {
 
     let voiceClient: VoiceChatClient | null = null;
     let mumbleClient: Client | null = null;
+    let audioStream: MumbleAudioStream | null = null;
 
     // Helper to get response from agent via chat completions API (synchronous)
     const getAgentResponse = async (text: string, username: string): Promise<string> => {
@@ -168,12 +170,16 @@ export default {
           if (mumbleClient.isConnected()) {
             api.logger.info("[mumble] connected to Mumble server");
 
-            // Set socket and user manager for voice client
+            // Create audio stream wrapper for full audio packet support
+            audioStream = new MumbleAudioStream(mumbleClient.socket);
+
+            // Set socket, audio stream, and user manager for voice client
             voiceClient.setSocket(mumbleClient.socket);
+            voiceClient.setAudioStream(audioStream);
             voiceClient.setUserManager(mumbleClient.users);
 
-            // Subscribe to audio packets
-            mumbleClient.socket.fullAudioPacket.subscribe(async (packet: FullAudioPacket) => {
+            // Subscribe to audio packets via our wrapper
+            audioStream.fullAudioPacket.subscribe(async (packet: FullAudioPacket) => {
               if (voiceClient) {
                 try {
                   await voiceClient.handleAudioPacket(packet);
@@ -235,6 +241,12 @@ export default {
 
       stop: async () => {
         api.logger.info("[mumble] stopping voice chat service");
+
+        // Clean up audio stream
+        if (audioStream) {
+          audioStream.destroy();
+          audioStream = null;
+        }
 
         // Disconnect Mumble client
         if (mumbleClient) {
