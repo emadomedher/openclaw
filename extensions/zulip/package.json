@@ -3,39 +3,41 @@
   "version": "0.1.0",
   "private": false,
   "description": "OpenClaw Zulip channel plugin",
-  "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "clean": "rm -rf dist",
-    "prepublishOnly": "npm run build"
+  "keywords": [
+    "channel",
+    "chat",
+    "openclaw",
+    "plugin",
+    "zulip"
+  ],
+  "license": "MIT",
+  "author": "Myka",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/myka/openclaw-zulip.git"
   },
   "files": [
     "dist",
     "src",
     "openclaw.plugin.json"
   ],
-  "keywords": [
-    "openclaw",
-    "zulip",
-    "chat",
-    "channel",
-    "plugin"
-  ],
-  "author": "Myka",
-  "license": "MIT",
+  "type": "module",
+  "main": "index.ts",
+  "types": "index.ts",
+  "scripts": {
+    "build": "echo \"built as part of monorepo\"",
+    "dev": "echo \"dev as part of monorepo\""
+  },
   "devDependencies": {
-    "typescript": "^5.3.0",
-    "openclaw": "^2026.2.0"
+    "openclaw": "^2026.2.0",
+    "typescript": "^5.3.0"
   },
   "peerDependencies": {
     "openclaw": ">=2026.2.0"
   },
   "openclaw": {
     "extensions": [
-      "./dist/index.js"
+      "./index.ts"
     ],
     "channel": {
       "id": "zulip",
@@ -51,9 +53,5 @@
       "localPath": "extensions/zulip",
       "defaultChoice": "npm"
     }
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/myka/openclaw-zulip.git"
   }
 }
