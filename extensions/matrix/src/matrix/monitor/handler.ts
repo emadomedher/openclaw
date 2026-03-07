@@ -4,15 +4,17 @@ import {
   createScopedPairingAccess,
   createReplyPrefixOptions,
   createTypingCallbacks,
+  dispatchReplyFromConfigWithSettledDispatcher,
   formatAllowlistMatchMeta,
   logInboundDrop,
   logTypingFailure,
+  resolveInboundSessionEnvelopeContext,
   resolveControlCommandGate,
   transcribeFirstAudio,
   type PluginRuntime,
   type RuntimeEnv,
   type RuntimeLogger,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/matrix";
 import type { CoreConfig, MatrixRoomConfig, ReplyToMode } from "../../types.js";
 import { fetchEventSummary } from "../actions/summary.js";
 import {
@@ -506,14 +508,12 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
       const textWithId = threadRootId
         ? `${bodyText}\n[matrix event id: ${messageId} room: ${roomId} thread: ${threadRootId}]`
         : `${bodyText}\n[matrix event id: ${messageId} room: ${roomId}]`;
-      const storePath = core.channel.session.resolveStorePath(cfg.session?.store, {
-        agentId: route.agentId,
-      });
-      const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);
-      const previousTimestamp = core.channel.session.readSessionUpdatedAt({
-        storePath,
-        sessionKey: route.sessionKey,
-      });
+      const { storePath, envelopeOptions, previousTimestamp } =
+        resolveInboundSessionEnvelopeContext({
+          cfg,
+          agentId: route.agentId,
+          sessionKey: route.sessionKey,
+        });
       const body = core.channel.reply.formatInboundEnvelope({
         channel: "Matrix",
         from: envelopeFrom,
@@ -677,22 +677,18 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           },
         });
 
-      const { queuedFinal, counts } = await core.channel.reply.withReplyDispatcher({
+      const { queuedFinal, counts } = await dispatchReplyFromConfigWithSettledDispatcher({
+        cfg,
+        ctxPayload,
         dispatcher,
         onSettled: () => {
           markDispatchIdle();
         },
-        run: () =>
-          core.channel.reply.dispatchReplyFromConfig({
-            ctx: ctxPayload,
-            cfg,
-            dispatcher,
-            replyOptions: {
-              ...replyOptions,
-              skillFilter: roomConfig?.skills,
-              onModelSelected,
-            },
-          }),
+        replyOptions: {
+          ...replyOptions,
+          skillFilter: roomConfig?.skills,
+          onModelSelected,
+        },
       });
       if (!queuedFinal) {
         return;
