@@ -20,6 +20,10 @@ import {
   resolveTimeoutSeconds,
   writeCache,
 } from "./web-shared.js";
+import {
+  getSearchProvider,
+  hasSearchProvider,
+} from "../../plugins/search-registry.js";
 
 const SEARCH_PROVIDERS = ["brave", "gemini", "grok", "kimi", "perplexity"] as const;
 const DEFAULT_SEARCH_COUNT = 5;
@@ -150,7 +154,7 @@ function normalizeToIsoDate(value: string): string | undefined {
 }
 
 function createWebSearchSchema(params: {
-  provider: (typeof SEARCH_PROVIDERS)[number];
+  provider: string;
   perplexityTransport?: PerplexityTransport;
 }) {
   const querySchema = {
@@ -490,7 +494,7 @@ function resolveSearchApiKey(search?: WebSearchConfig): string | undefined {
   return fromConfig || fromEnv || undefined;
 }
 
-function missingSearchKeyPayload(provider: (typeof SEARCH_PROVIDERS)[number]) {
+function missingSearchKeyPayload(provider: string) {
   if (provider === "brave") {
     return {
       error: "missing_brave_api_key",
@@ -530,11 +534,17 @@ function missingSearchKeyPayload(provider: (typeof SEARCH_PROVIDERS)[number]) {
   };
 }
 
-function resolveSearchProvider(search?: WebSearchConfig): (typeof SEARCH_PROVIDERS)[number] {
+function resolveSearchProvider(search?: WebSearchConfig): string {
   const raw =
     search && "provider" in search && typeof search.provider === "string"
       ? search.provider.trim().toLowerCase()
       : "";
+
+  // Check plugin-registered providers first.
+  if (raw && hasSearchProvider(raw)) {
+    return raw;
+  }
+
   if (raw === "brave") {
     return "brave";
   }
@@ -1013,7 +1023,7 @@ function normalizeBraveLanguageParams(params: { search_lang?: string; ui_lang?: 
  */
 function normalizeFreshness(
   value: string | undefined,
-  provider: (typeof SEARCH_PROVIDERS)[number],
+  provider: string,
 ): string | undefined {
   if (!value) {
     return undefined;
@@ -1476,7 +1486,7 @@ async function runBraveLlmContextSearch(params: {
         method: "GET",
         headers: {
           Accept: "application/json",
-          "X-Subscription-Token": params.apiKey,
+          "X-Subscription-Token": params.apiKey!,
         },
       },
     },
@@ -1498,10 +1508,10 @@ async function runBraveLlmContextSearch(params: {
 async function runWebSearch(params: {
   query: string;
   count: number;
-  apiKey: string;
+  apiKey: string | undefined;
   timeoutSeconds: number;
   cacheTtlMs: number;
-  provider: (typeof SEARCH_PROVIDERS)[number];
+  provider: string;
   country?: string;
   language?: string;
   search_lang?: string;
@@ -1521,8 +1531,10 @@ async function runWebSearch(params: {
   kimiBaseUrl?: string;
   kimiModel?: string;
   braveMode?: "web" | "llm-context";
+  pluginSearchConfig?: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
   const effectiveBraveMode = params.braveMode ?? "web";
+  const pluginProvider = getSearchProvider(params.provider);
   const providerSpecificKey =
     params.provider === "perplexity"
       ? `${params.perplexityTransport ?? "search_api"}:${params.perplexityBaseUrl ?? PERPLEXITY_DIRECT_BASE_URL}:${params.perplexityModel ?? DEFAULT_PERPLEXITY_MODEL}`
@@ -1532,7 +1544,9 @@ async function runWebSearch(params: {
           ? (params.geminiModel ?? DEFAULT_GEMINI_MODEL)
           : params.provider === "kimi"
             ? `${params.kimiBaseUrl ?? DEFAULT_KIMI_BASE_URL}:${params.kimiModel ?? DEFAULT_KIMI_MODEL}`
-            : "";
+            : pluginProvider
+              ? (pluginProvider.cacheKeyExtra?.(params.pluginSearchConfig ?? {}) ?? "plugin")
+              : "";
   const cacheKey = normalizeCacheKey(
     params.provider === "brave" && effectiveBraveMode === "llm-context"
       ? `${params.provider}:llm-context:${params.query}:${params.country || "default"}:${params.search_lang || params.language || "default"}:${params.freshness || "default"}`
@@ -1545,11 +1559,61 @@ async function runWebSearch(params: {
 
   const start = Date.now();
 
+  // Check plugin-registered search providers first.
+  if (pluginProvider) {
+    const searchConfig = params.pluginSearchConfig ?? {};
+
+    const result = await pluginProvider.search(
+      {
+        query: params.query,
+        count: params.count,
+        timeoutSeconds: params.timeoutSeconds,
+        country: params.country,
+        language: params.language,
+        freshness: params.freshness,
+        dateAfter: params.dateAfter,
+        dateBefore: params.dateBefore,
+      },
+      searchConfig,
+    );
+
+    const payload: Record<string, unknown> = {
+      query: params.query,
+      provider: params.provider,
+      tookMs: Date.now() - start,
+    };
+
+    if (result.results) {
+      payload.count = result.results.length;
+      payload.results = result.results.map((entry) => ({
+        title: entry.title ? wrapWebContent(entry.title, "web_search") : "",
+        url: entry.url,
+        description: entry.description ? wrapWebContent(entry.description, "web_search") : "",
+        siteName: entry.siteName ?? (entry.url ? resolveSiteName(entry.url) : undefined),
+      }));
+    }
+    if (result.content) {
+      payload.externalContent = {
+        untrusted: true,
+        source: "web_search",
+        provider: params.provider,
+        wrapped: true,
+      };
+      payload.content = wrapWebContent(result.content, "web_search");
+    }
+    if (result.citations) {
+      payload.citations = result.citations;
+    }
+
+    writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+    return payload;
+  }
+
   if (params.provider === "perplexity") {
     if (params.perplexityTransport === "chat_completions") {
       const { content, citations } = await runPerplexitySearch({
         query: params.query,
-        apiKey: params.apiKey,
+        apiKey: params.apiKey!,
         baseUrl: params.perplexityBaseUrl ?? DEFAULT_PERPLEXITY_BASE_URL,
         model: params.perplexityModel ?? DEFAULT_PERPLEXITY_MODEL,
         timeoutSeconds: params.timeoutSeconds,
@@ -1576,7 +1640,7 @@ async function runWebSearch(params: {
 
     const results = await runPerplexitySearchApi({
       query: params.query,
-      apiKey: params.apiKey,
+      apiKey: params.apiKey!,
       count: params.count,
       timeoutSeconds: params.timeoutSeconds,
       country: params.country,
@@ -1609,7 +1673,7 @@ async function runWebSearch(params: {
   if (params.provider === "grok") {
     const { content, citations, inlineCitations } = await runGrokSearch({
       query: params.query,
-      apiKey: params.apiKey,
+      apiKey: params.apiKey!,
       model: params.grokModel ?? DEFAULT_GROK_MODEL,
       timeoutSeconds: params.timeoutSeconds,
       inlineCitations: params.grokInlineCitations ?? false,
@@ -1637,7 +1701,7 @@ async function runWebSearch(params: {
   if (params.provider === "kimi") {
     const { content, citations } = await runKimiSearch({
       query: params.query,
-      apiKey: params.apiKey,
+      apiKey: params.apiKey!,
       baseUrl: params.kimiBaseUrl ?? DEFAULT_KIMI_BASE_URL,
       model: params.kimiModel ?? DEFAULT_KIMI_MODEL,
       timeoutSeconds: params.timeoutSeconds,
@@ -1664,7 +1728,7 @@ async function runWebSearch(params: {
   if (params.provider === "gemini") {
     const geminiResult = await runGeminiSearch({
       query: params.query,
-      apiKey: params.apiKey,
+      apiKey: params.apiKey!,
       model: params.geminiModel ?? DEFAULT_GEMINI_MODEL,
       timeoutSeconds: params.timeoutSeconds,
     });
@@ -1694,7 +1758,7 @@ async function runWebSearch(params: {
   if (effectiveBraveMode === "llm-context") {
     const { results: llmResults, sources } = await runBraveLlmContextSearch({
       query: params.query,
-      apiKey: params.apiKey,
+      apiKey: params.apiKey!,
       timeoutSeconds: params.timeoutSeconds,
       country: params.country,
       search_lang: params.search_lang,
@@ -1752,7 +1816,7 @@ async function runWebSearch(params: {
     url.searchParams.set("freshness", `1970-01-01to${params.dateBefore}`);
   }
 
-  const mapped = await withTrustedWebSearchEndpoint(
+  const mapped = (await withTrustedWebSearchEndpoint(
     {
       url: url.toString(),
       timeoutSeconds: params.timeoutSeconds,
@@ -1760,7 +1824,7 @@ async function runWebSearch(params: {
         method: "GET",
         headers: {
           Accept: "application/json",
-          "X-Subscription-Token": params.apiKey,
+          "X-Subscription-Token": params.apiKey!,
         },
       },
     },
@@ -1787,7 +1851,7 @@ async function runWebSearch(params: {
         };
       });
     },
-  );
+  )) as Array<{ title: string; url: string; description: string; published?: string; siteName?: string }>;
 
   const payload = {
     query: params.query,
@@ -1824,8 +1888,12 @@ export function createWebSearchTool(options?: {
   const braveConfig = resolveBraveConfig(search);
   const braveMode = resolveBraveMode(braveConfig);
 
-  const description =
-    provider === "perplexity"
+  // Use plugin provider description if available.
+  const pluginSearchProvider = getSearchProvider(provider);
+
+  const description = pluginSearchProvider
+    ? pluginSearchProvider.description
+    : provider === "perplexity"
       ? perplexityTransport.transport === "chat_completions"
         ? "Search the web using Perplexity Sonar via Perplexity/OpenRouter chat completions. Returns AI-synthesized answers with citations from web-grounded search."
         : "Search the web using the Perplexity Search API. Returns structured results (title, URL, snippet) for fast research. Supports domain, region, language, and freshness filtering."
@@ -1849,8 +1917,9 @@ export function createWebSearchTool(options?: {
     }),
     execute: async (_toolCallId, args) => {
       const perplexityRuntime = provider === "perplexity" ? perplexityTransport : undefined;
-      const apiKey =
-        provider === "perplexity"
+      const apiKey = pluginSearchProvider
+        ? (pluginSearchProvider.resolveApiKey?.((search as Record<string, unknown>) ?? {}) ?? "")
+        : provider === "perplexity"
           ? perplexityRuntime?.apiKey
           : provider === "grok"
             ? resolveGrokApiKey(grokConfig)
@@ -1860,7 +1929,8 @@ export function createWebSearchTool(options?: {
                 ? resolveGeminiApiKey(geminiConfig)
                 : resolveSearchApiKey(search);
 
-      if (!apiKey) {
+      // Plugin providers handle their own API key requirements.
+      if (!apiKey && !pluginSearchProvider) {
         return jsonResult(missingSearchKeyPayload(provider));
       }
 
@@ -2095,6 +2165,9 @@ export function createWebSearchTool(options?: {
         kimiBaseUrl: resolveKimiBaseUrl(kimiConfig),
         kimiModel: resolveKimiModel(kimiConfig),
         braveMode,
+        pluginSearchConfig: hasSearchProvider(provider)
+          ? ((search as Record<string, unknown> | undefined)?.[provider] as Record<string, unknown>) ?? {}
+          : undefined,
       });
       return jsonResult(result);
     },
